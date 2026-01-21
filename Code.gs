@@ -1,10 +1,11 @@
 /*************************************************
  * Availability menu for Google Docs
- * Items:
- *   1) This week 2 hour blocks        -> show full free segments that are >= 2 hours
- *   2) This week full availability    -> show merged free intervals
- *   3) Next week 2 hour blocks        -> same filtering for next Mon..Fri
- *   4) Next week full availability    -> merged free intervals for next Mon..Fri
+ * Dialog options:
+ *   - This week 2 hour blocks        -> show full free segments that are >= 2 hours
+ *   - This week full availability    -> show merged free intervals
+ *   - Next week 2 hour blocks        -> same filtering for next Mon..Fri
+ *   - Next week full availability    -> merged free intervals for next Mon..Fri
+ *   - Optional recurring events to ignore (next two weeks)
  *
  * Window: 10:00 to 18:30 local time, Mon..Fri
  * Busy: YES, MAYBE, INVITED, OWNER. Declined is free.
@@ -23,25 +24,48 @@ const FIT_BLOCK_HOURS = 2;
 function onOpen() {
   DocumentApp.getUi()
     .createMenu("Availability")
-    .addItem("This week 2 hour blocks", "menuThisWeekFit2h")
-    .addItem("This week full availability", "menuThisWeekFull")
-    .addItem("Next week 2 hour blocks", "menuNextWeekFit2h")
-    .addItem("Next week full availability", "menuNextWeekFull")
+    .addItem("Calculate availability", "showAvailabilityDialog")
     .addToUi();
 }
 
-/* Menu handlers */
-function menuThisWeekFit2h() { insertAvailability_("FIT_2H", "THIS_WEEK"); }
-function menuThisWeekFull()  { insertAvailability_("ALL_AVAIL", "THIS_WEEK"); }
-function menuNextWeekFit2h() { insertAvailability_("FIT_2H", "NEXT_WEEK"); }
-function menuNextWeekFull()  { insertAvailability_("ALL_AVAIL", "NEXT_WEEK"); }
+function showAvailabilityDialog() {
+  const html = HtmlService.createHtmlOutputFromFile("availability_dialog")
+    .setWidth(420)
+    .setHeight(560);
+  DocumentApp.getUi().showModalDialog(html, "Availability options");
+}
 
 /* Main */
-function insertAvailability_(mode, rangeKey) {
+function insertAvailabilityFromDialog(options) {
+  if (!options || !Array.isArray(options.selections) || options.selections.length === 0) {
+    throw new Error("Please select at least one availability option.");
+  }
+  const ignoreRecurringIds = Array.isArray(options.ignoreRecurringIds)
+    ? options.ignoreRecurringIds
+    : [];
+  const selections = options.selections;
+  const lines = [];
+
+  for (const selection of selections) {
+    const meta = selectionMeta_(selection);
+    if (!meta) continue;
+    lines.push(meta.label);
+    const sectionLines = buildAvailabilityLines_(meta.mode, meta.rangeKey, ignoreRecurringIds);
+    lines.push(...sectionLines);
+    lines.push("");
+  }
+
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+
   const doc = DocumentApp.getActiveDocument();
   const body = doc.getBody();
   if (!body) throw new Error("No document body found.");
 
+  overwriteBodyWithLines_(body, lines);
+  doc.saveAndClose();
+}
+
+function buildAvailabilityLines_(mode, rangeKey, ignoreRecurringIds) {
   const { startDate, endDate } = getRange_(rangeKey);
   const days = enumerateDays_(startDate, endDate).filter(isWeekday_);
 
@@ -58,7 +82,7 @@ function insertAvailability_(mode, rangeKey) {
       if (clipped > dayStart) dayStart = clipped;
     }
 
-    const free = getFreeIntervals_(dayStart, dayEnd);
+    const free = getFreeIntervals_(dayStart, dayEnd, ignoreRecurringIds);
 
     const label = formatDayLabel_(day);
     let text;
@@ -73,8 +97,17 @@ function insertAvailability_(mode, rangeKey) {
     lines.push(`${label}: ${text || "none"}`);
   }
 
-  overwriteBodyWithLines_(body, lines);
-  doc.saveAndClose();
+  return lines.length ? lines : ["No weekdays in the selected range."];
+}
+
+function selectionMeta_(selectionKey) {
+  const map = {
+    THIS_WEEK_2H: { mode: "FIT_2H", rangeKey: "THIS_WEEK", label: "This week — 2 hour blocks" },
+    THIS_WEEK_ALL: { mode: "ALL_AVAIL", rangeKey: "THIS_WEEK", label: "This week — all availability" },
+    NEXT_WEEK_2H: { mode: "FIT_2H", rangeKey: "NEXT_WEEK", label: "Next week — 2 hour blocks" },
+    NEXT_WEEK_ALL: { mode: "ALL_AVAIL", rangeKey: "NEXT_WEEK", label: "Next week — all availability" },
+  };
+  return map[selectionKey] || null;
 }
 
 /* Safe clear + write */
@@ -132,13 +165,14 @@ function isWeekday_(d) {
 }
 
 /* Calendar busy/free */
-function getFreeIntervals_(windowStart, windowEnd) {
+function getFreeIntervals_(windowStart, windowEnd, ignoreRecurringIds) {
   if (windowStart >= windowEnd) return [];
   const cal = CalendarApp.getDefaultCalendar();
   const events = cal.getEvents(windowStart, windowEnd);
 
   const busy = [];
   for (const ev of events) {
+    if (shouldIgnoreRecurringEvent_(ev, ignoreRecurringIds)) continue;
     const status = ev.getMyStatus && ev.getMyStatus();
     const isBusy =
       status === CalendarApp.GuestStatus.YES ||
@@ -155,6 +189,43 @@ function getFreeIntervals_(windowStart, windowEnd) {
 
   const merged = mergeIntervals_(busy);
   return subtractIntervals_(windowStart, windowEnd, merged);
+}
+
+function shouldIgnoreRecurringEvent_(event, ignoreRecurringIds) {
+  if (!ignoreRecurringIds || ignoreRecurringIds.length === 0) return false;
+  if (!event.isRecurringEvent || !event.isRecurringEvent()) return false;
+  const series = event.getEventSeries && event.getEventSeries();
+  if (!series) return false;
+  return ignoreRecurringIds.indexOf(series.getId()) !== -1;
+}
+
+function getRecurringEventSeriesOptions() {
+  const today = todayDate_();
+  const endDate = new Date(today);
+  endDate.setDate(endDate.getDate() + 13);
+  const cal = CalendarApp.getDefaultCalendar();
+  const events = cal.getEvents(today, endDate);
+
+  const seen = {};
+  const options = [];
+  for (const ev of events) {
+    if (!ev.isRecurringEvent || !ev.isRecurringEvent()) continue;
+    const series = ev.getEventSeries && ev.getEventSeries();
+    if (!series) continue;
+    const seriesId = series.getId();
+    if (seen[seriesId]) continue;
+    seen[seriesId] = true;
+    const start = ev.getStartTime();
+    const end = ev.getEndTime();
+    options.push({
+      id: seriesId,
+      title: ev.getTitle(),
+      time: `${formatTime_(start)} to ${formatTime_(end)}`,
+    });
+  }
+
+  options.sort((a, b) => a.title.localeCompare(b.title));
+  return options;
 }
 
 /* Interval math */
