@@ -13,6 +13,20 @@
           .map((el) => el.value);
       }
 
+      function collectManualCalendarIds() {
+        const raw = document.getElementById("manual-calendar-ids").value || "";
+        return raw
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+      }
+
+      function collectSelectedCalendarIds() {
+        const selected = collectCalendars();
+        const manual = collectManualCalendarIds();
+        return Array.from(new Set(selected.concat(manual)));
+      }
+
       function collectIgnoredRecurring() {
         return Array.from(document.querySelectorAll("input[name='ignore-recurring']:checked"))
           .map((el) => el.value);
@@ -20,7 +34,7 @@
 
       function submitOptions() {
         const selections = collectSelections();
-        const calendarIds = collectCalendars();
+        const calendarIds = collectSelectedCalendarIds();
         if (selections.length === 0) {
           document.getElementById("error").textContent = "Select at least one availability option.";
           return;
@@ -81,7 +95,7 @@
       }
 
       function loadRecurringEvents() {
-        const calendarIds = collectCalendars();
+        const calendarIds = collectSelectedCalendarIds();
         if (calendarIds.length === 0) {
           document.getElementById("recurring-events").innerHTML =
             "<p style='margin:6px 0; color:#666;'>Select a calendar to load recurring events.</p>";
@@ -102,6 +116,9 @@
           .withSuccessHandler((calendars) => {
             renderCalendars(calendars);
             loadRecurringEvents();
+            const manualInput = document.getElementById("manual-calendar-ids");
+            manualInput.addEventListener("change", loadRecurringEvents);
+            manualInput.addEventListener("blur", loadRecurringEvents);
           })
           .withFailureHandler((err) => {
             document.getElementById("calendar-options").innerHTML =
@@ -141,6 +158,13 @@
         Select the calendars to include when calculating availability.
       </p>
       <div id="calendar-options"></div>
+      <div style="margin-top:8px;">
+        <label style="display:block; margin-bottom:4px;">
+          <span style="font-size:12px; color:#666;">Add calendar ID (comma-separated)</span>
+        </label>
+        <input id="manual-calendar-ids" type="text" style="width:100%; box-sizing:border-box;">
+        <button type="button" onclick="loadCalendars()" style="margin-top:6px;">Refresh calendars</button>
+      </div>
     </div>
 
     <div style="margin-bottom:12px;">

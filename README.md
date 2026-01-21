@@ -7,7 +7,7 @@ This Google Apps Script project calculates availability from your primary Google
 1. Open the Google Doc bound to this script.
 2. Use **Availability → Calculate availability** to open the dialog.
 3. Select one or more availability outputs (this week and/or next week, 2-hour blocks and/or full availability).
-4. Select which calendars to include (useful if you have multiple work calendars).
+4. Select which calendars to include (useful if you have multiple work calendars). Use **Refresh calendars** if a newly shared calendar does not appear, or enter a calendar ID manually.
 5. (Optional) Check recurring events you want to ignore for the next two weeks.
 6. Click **Insert** to overwrite the document with the requested availability blocks.
 
