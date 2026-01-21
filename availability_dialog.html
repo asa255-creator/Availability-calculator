@@ -8,6 +8,11 @@
           .map((el) => el.value);
       }
 
+      function collectCalendars() {
+        return Array.from(document.querySelectorAll("input[name='calendar-option']:checked"))
+          .map((el) => el.value);
+      }
+
       function collectIgnoredRecurring() {
         return Array.from(document.querySelectorAll("input[name='ignore-recurring']:checked"))
           .map((el) => el.value);
@@ -15,8 +20,13 @@
 
       function submitOptions() {
         const selections = collectSelections();
+        const calendarIds = collectCalendars();
         if (selections.length === 0) {
           document.getElementById("error").textContent = "Select at least one availability option.";
+          return;
+        }
+        if (calendarIds.length === 0) {
+          document.getElementById("error").textContent = "Select at least one calendar.";
           return;
         }
         document.getElementById("error").textContent = "";
@@ -27,8 +37,29 @@
           })
           .insertAvailabilityFromDialog({
             selections,
+            calendarIds,
             ignoreRecurringIds: collectIgnoredRecurring(),
           });
+      }
+
+      function renderCalendars(calendars) {
+        const container = document.getElementById("calendar-options");
+        if (!calendars || calendars.length === 0) {
+          container.innerHTML = "<p style='margin:6px 0; color:#666;'>No calendars available.</p>";
+          return;
+        }
+        container.innerHTML = calendars
+          .map((calendar) => (
+            "<label style='display:block; margin:4px 0;'>" +
+              "<input type='checkbox' name='calendar-option' value='" + calendar.id + "'" +
+                (calendar.isPrimary ? " checked" : "") +
+                ">" +
+              "<span style='margin-left:6px;'>" + calendar.name + "</span>" +
+            "</label>"
+          ))
+          .join("");
+        const inputs = container.querySelectorAll("input[name='calendar-option']");
+        inputs.forEach((input) => input.addEventListener("change", loadRecurringEvents));
       }
 
       function renderRecurringEvents(events) {
@@ -42,7 +73,7 @@
             "<label style='display:block; margin:4px 0;'>" +
               "<input type='checkbox' name='ignore-recurring' value='" + event.id + "'>" +
               "<span style='margin-left:6px;'>" +
-                event.title + " (" + event.time + ")" +
+                event.title + " (" + event.calendarName + ", " + event.time + ")" +
               "</span>" +
             "</label>"
           ))
@@ -50,6 +81,12 @@
       }
 
       function loadRecurringEvents() {
+        const calendarIds = collectCalendars();
+        if (calendarIds.length === 0) {
+          document.getElementById("recurring-events").innerHTML =
+            "<p style='margin:6px 0; color:#666;'>Select a calendar to load recurring events.</p>";
+          return;
+        }
         google.script.run
           .withSuccessHandler(renderRecurringEvents)
           .withFailureHandler((err) => {
@@ -57,10 +94,24 @@
               "<p style='margin:6px 0; color:#b00;'>Unable to load recurring events.</p>";
             document.getElementById("error").textContent = err.message || err;
           })
-          .getRecurringEventSeriesOptions();
+          .getRecurringEventSeriesOptions(calendarIds);
       }
 
-      window.addEventListener("load", loadRecurringEvents);
+      function loadCalendars() {
+        google.script.run
+          .withSuccessHandler((calendars) => {
+            renderCalendars(calendars);
+            loadRecurringEvents();
+          })
+          .withFailureHandler((err) => {
+            document.getElementById("calendar-options").innerHTML =
+              "<p style='margin:6px 0; color:#b00;'>Unable to load calendars.</p>";
+            document.getElementById("error").textContent = err.message || err;
+          })
+          .getCalendarOptions();
+      }
+
+      window.addEventListener("load", loadCalendars);
     </script>
   </head>
   <body style="font-family:Arial,sans-serif;">
@@ -82,6 +133,14 @@
         <input type="checkbox" name="availability-option" value="NEXT_WEEK_ALL">
         <span style="margin-left:6px;">Next week — all availability</span>
       </label>
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <strong>Calendars to include</strong>
+      <p style="margin:6px 0; color:#666; font-size:12px;">
+        Select the calendars to include when calculating availability.
+      </p>
+      <div id="calendar-options"></div>
     </div>
 
     <div style="margin-bottom:12px;">

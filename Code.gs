@@ -40,17 +40,21 @@ function insertAvailabilityFromDialog(options) {
   if (!options || !Array.isArray(options.selections) || options.selections.length === 0) {
     throw new Error("Please select at least one availability option.");
   }
+  if (!options.calendarIds || options.calendarIds.length === 0) {
+    throw new Error("Please select at least one calendar.");
+  }
   const ignoreRecurringIds = Array.isArray(options.ignoreRecurringIds)
     ? options.ignoreRecurringIds
     : [];
   const selections = options.selections;
+  const calendars = getCalendarsFromIds_(options.calendarIds);
   const lines = [];
 
   for (const selection of selections) {
     const meta = selectionMeta_(selection);
     if (!meta) continue;
     lines.push(meta.label);
-    const sectionLines = buildAvailabilityLines_(meta.mode, meta.rangeKey, ignoreRecurringIds);
+    const sectionLines = buildAvailabilityLines_(meta.mode, meta.rangeKey, ignoreRecurringIds, calendars);
     lines.push(...sectionLines);
     lines.push("");
   }
@@ -65,7 +69,7 @@ function insertAvailabilityFromDialog(options) {
   doc.saveAndClose();
 }
 
-function buildAvailabilityLines_(mode, rangeKey, ignoreRecurringIds) {
+function buildAvailabilityLines_(mode, rangeKey, ignoreRecurringIds, calendars) {
   const { startDate, endDate } = getRange_(rangeKey);
   const days = enumerateDays_(startDate, endDate).filter(isWeekday_);
 
@@ -82,7 +86,7 @@ function buildAvailabilityLines_(mode, rangeKey, ignoreRecurringIds) {
       if (clipped > dayStart) dayStart = clipped;
     }
 
-    const free = getFreeIntervals_(dayStart, dayEnd, ignoreRecurringIds);
+    const free = getFreeIntervals_(dayStart, dayEnd, ignoreRecurringIds, calendars);
 
     const label = formatDayLabel_(day);
     let text;
@@ -165,10 +169,15 @@ function isWeekday_(d) {
 }
 
 /* Calendar busy/free */
-function getFreeIntervals_(windowStart, windowEnd, ignoreRecurringIds) {
+function getFreeIntervals_(windowStart, windowEnd, ignoreRecurringIds, calendars) {
   if (windowStart >= windowEnd) return [];
-  const cal = CalendarApp.getDefaultCalendar();
-  const events = cal.getEvents(windowStart, windowEnd);
+  const calendarsToUse = calendars && calendars.length
+    ? calendars
+    : [CalendarApp.getDefaultCalendar()];
+  const events = [];
+  for (const cal of calendarsToUse) {
+    events.push(...cal.getEvents(windowStart, windowEnd));
+  }
 
   const busy = [];
   for (const ev of events) {
@@ -199,12 +208,15 @@ function shouldIgnoreRecurringEvent_(event, ignoreRecurringIds) {
   return ignoreRecurringIds.indexOf(series.getId()) !== -1;
 }
 
-function getRecurringEventSeriesOptions() {
+function getRecurringEventSeriesOptions(calendarIds) {
   const today = todayDate_();
   const endDate = new Date(today);
   endDate.setDate(endDate.getDate() + 13);
-  const cal = CalendarApp.getDefaultCalendar();
-  const events = cal.getEvents(today, endDate);
+  const calendars = getCalendarsFromIds_(calendarIds);
+  const events = [];
+  for (const cal of calendars) {
+    events.push(...cal.getEvents(today, endDate));
+  }
 
   const seen = {};
   const options = [];
@@ -217,15 +229,42 @@ function getRecurringEventSeriesOptions() {
     seen[seriesId] = true;
     const start = ev.getStartTime();
     const end = ev.getEndTime();
+    const calendarName = ev.getOriginalCalendar && ev.getOriginalCalendar()
+      ? ev.getOriginalCalendar().getName()
+      : "Calendar";
     options.push({
       id: seriesId,
       title: ev.getTitle(),
+      calendarName,
       time: `${formatTime_(start)} to ${formatTime_(end)}`,
     });
   }
 
-  options.sort((a, b) => a.title.localeCompare(b.title));
+  options.sort((a, b) => {
+    const nameCompare = a.calendarName.localeCompare(b.calendarName);
+    return nameCompare !== 0 ? nameCompare : a.title.localeCompare(b.title);
+  });
   return options;
+}
+
+function getCalendarOptions() {
+  const defaultCalendar = CalendarApp.getDefaultCalendar();
+  const calendars = CalendarApp.getAllCalendars();
+  return calendars.map((cal) => ({
+    id: cal.getId(),
+    name: cal.getName(),
+    isPrimary: cal.getId() === defaultCalendar.getId(),
+  }));
+}
+
+function getCalendarsFromIds_(calendarIds) {
+  if (!calendarIds || calendarIds.length === 0) {
+    return [CalendarApp.getDefaultCalendar()];
+  }
+  const calendars = calendarIds
+    .map((id) => CalendarApp.getCalendarById(id))
+    .filter(Boolean);
+  return calendars.length ? calendars : [CalendarApp.getDefaultCalendar()];
 }
 
 /* Interval math */
