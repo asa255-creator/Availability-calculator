@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <script>
+      function submitOption() {
+        const key = document.getElementById("mode").value;
+        google.script.run
+          .withSuccessHandler(() => google.script.host.close())
+          .insertAvailability(key);
+      }
+    </script>
+  </head>
+  <body style="font-family:Arial,sans-serif;">
+    <label for="mode">Choose output</label><br>
+    <select id="mode" style="width:100%; margin:6px 0;">
+      <option value="THIS_WEEK_2H">Rest of this week including today — 2 hour blocks</option>
+      <option value="THIS_WEEK_ALL">Rest of this week including today — all availability</option>
+      <option value="NEXT_WEEK_2H">Next week — 2 hour blocks</option>
+      <option value="NEXT_WEEK_ALL">Next week — all availability</option>
+    </select>
+    <button onclick="submitOption()">Insert</button>
+    <p style="font-size:12px; color:#666;">
+      Window 1:00 to 18:30. Declined events are free. Accepted, maybe, invited, and owner are busy.
+    </p>
+  </body>
+</html>
