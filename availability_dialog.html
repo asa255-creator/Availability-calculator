@@ -3,25 +3,182 @@
   <head>
     <meta charset="UTF-8">
     <script>
-      function submitOption() {
-        const key = document.getElementById("mode").value;
+      function collectSelections() {
+        return Array.from(document.querySelectorAll("input[name='availability-option']:checked"))
+          .map((el) => el.value);
+      }
+
+      function collectCalendars() {
+        return Array.from(document.querySelectorAll("input[name='calendar-option']:checked"))
+          .map((el) => el.value);
+      }
+
+      function collectManualCalendarIds() {
+        const raw = document.getElementById("manual-calendar-ids").value || "";
+        return raw
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+      }
+
+      function collectSelectedCalendarIds() {
+        const selected = collectCalendars();
+        const manual = collectManualCalendarIds();
+        return Array.from(new Set(selected.concat(manual)));
+      }
+
+      function collectIgnoredRecurring() {
+        return Array.from(document.querySelectorAll("input[name='ignore-recurring']:checked"))
+          .map((el) => el.value);
+      }
+
+      function submitOptions() {
+        const selections = collectSelections();
+        const calendarIds = collectSelectedCalendarIds();
+        if (selections.length === 0) {
+          document.getElementById("error").textContent = "Select at least one availability option.";
+          return;
+        }
+        if (calendarIds.length === 0) {
+          document.getElementById("error").textContent = "Select at least one calendar.";
+          return;
+        }
+        document.getElementById("error").textContent = "";
         google.script.run
           .withSuccessHandler(() => google.script.host.close())
-          .insertAvailability(key);
+          .withFailureHandler((err) => {
+            document.getElementById("error").textContent = err.message || err;
+          })
+          .insertAvailabilityFromDialog({
+            selections,
+            calendarIds,
+            ignoreRecurringIds: collectIgnoredRecurring(),
+          });
       }
+
+      function renderCalendars(calendars) {
+        const container = document.getElementById("calendar-options");
+        if (!calendars || calendars.length === 0) {
+          container.innerHTML = "<p style='margin:6px 0; color:#666;'>No calendars available.</p>";
+          return;
+        }
+        container.innerHTML = calendars
+          .map((calendar) => (
+            "<label style='display:block; margin:4px 0;'>" +
+              "<input type='checkbox' name='calendar-option' value='" + calendar.id + "'" +
+                (calendar.isPrimary ? " checked" : "") +
+                ">" +
+              "<span style='margin-left:6px;'>" + calendar.name + "</span>" +
+            "</label>"
+          ))
+          .join("");
+        const inputs = container.querySelectorAll("input[name='calendar-option']");
+        inputs.forEach((input) => input.addEventListener("change", loadRecurringEvents));
+      }
+
+      function renderRecurringEvents(events) {
+        const container = document.getElementById("recurring-events");
+        if (!events || events.length === 0) {
+          container.innerHTML = "<p style='margin:6px 0; color:#666;'>No recurring events in the next two weeks.</p>";
+          return;
+        }
+        container.innerHTML = events
+          .map((event) => (
+            "<label style='display:block; margin:4px 0;'>" +
+              "<input type='checkbox' name='ignore-recurring' value='" + event.id + "'>" +
+              "<span style='margin-left:6px;'>" +
+                event.title + " (" + event.calendarName + ", " + event.time + ")" +
+              "</span>" +
+            "</label>"
+          ))
+          .join("");
+      }
+
+      function loadRecurringEvents() {
+        const calendarIds = collectSelectedCalendarIds();
+        if (calendarIds.length === 0) {
+          document.getElementById("recurring-events").innerHTML =
+            "<p style='margin:6px 0; color:#666;'>Select a calendar to load recurring events.</p>";
+          return;
+        }
+        google.script.run
+          .withSuccessHandler(renderRecurringEvents)
+          .withFailureHandler((err) => {
+            document.getElementById("recurring-events").innerHTML =
+              "<p style='margin:6px 0; color:#b00;'>Unable to load recurring events.</p>";
+            document.getElementById("error").textContent = err.message || err;
+          })
+          .getRecurringEventSeriesOptions(calendarIds);
+      }
+
+      function loadCalendars() {
+        google.script.run
+          .withSuccessHandler((calendars) => {
+            renderCalendars(calendars);
+            loadRecurringEvents();
+            const manualInput = document.getElementById("manual-calendar-ids");
+            manualInput.addEventListener("change", loadRecurringEvents);
+            manualInput.addEventListener("blur", loadRecurringEvents);
+          })
+          .withFailureHandler((err) => {
+            document.getElementById("calendar-options").innerHTML =
+              "<p style='margin:6px 0; color:#b00;'>Unable to load calendars.</p>";
+            document.getElementById("error").textContent = err.message || err;
+          })
+          .getCalendarOptions();
+      }
+
+      window.addEventListener("load", loadCalendars);
     </script>
   </head>
   <body style="font-family:Arial,sans-serif;">
-    <label for="mode">Choose output</label><br>
-    <select id="mode" style="width:100%; margin:6px 0;">
-      <option value="THIS_WEEK_2H">Rest of this week including today — 2 hour blocks</option>
-      <option value="THIS_WEEK_ALL">Rest of this week including today — all availability</option>
-      <option value="NEXT_WEEK_2H">Next week — 2 hour blocks</option>
-      <option value="NEXT_WEEK_ALL">Next week — all availability</option>
-    </select>
-    <button onclick="submitOption()">Insert</button>
+    <div style="margin-bottom:12px;">
+      <strong>Choose availability options</strong>
+      <label style="display:block; margin:6px 0;">
+        <input type="checkbox" name="availability-option" value="THIS_WEEK_2H">
+        <span style="margin-left:6px;">Rest of this week including today — 2 hour blocks</span>
+      </label>
+      <label style="display:block; margin:6px 0;">
+        <input type="checkbox" name="availability-option" value="THIS_WEEK_ALL">
+        <span style="margin-left:6px;">Rest of this week including today — all availability</span>
+      </label>
+      <label style="display:block; margin:6px 0;">
+        <input type="checkbox" name="availability-option" value="NEXT_WEEK_2H">
+        <span style="margin-left:6px;">Next week — 2 hour blocks</span>
+      </label>
+      <label style="display:block; margin:6px 0;">
+        <input type="checkbox" name="availability-option" value="NEXT_WEEK_ALL">
+        <span style="margin-left:6px;">Next week — all availability</span>
+      </label>
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <strong>Calendars to include</strong>
+      <p style="margin:6px 0; color:#666; font-size:12px;">
+        Select the calendars to include when calculating availability.
+      </p>
+      <div id="calendar-options"></div>
+      <div style="margin-top:8px;">
+        <label style="display:block; margin-bottom:4px;">
+          <span style="font-size:12px; color:#666;">Add calendar ID (comma-separated)</span>
+        </label>
+        <input id="manual-calendar-ids" type="text" style="width:100%; box-sizing:border-box;">
+        <button type="button" onclick="loadCalendars()" style="margin-top:6px;">Refresh calendars</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <strong>Recurring events in the next two weeks</strong>
+      <p style="margin:6px 0; color:#666; font-size:12px;">
+        Check any recurring events you want to ignore when calculating availability.
+      </p>
+      <div id="recurring-events"></div>
+    </div>
+
+    <div id="error" style="color:#b00; font-size:12px; margin-bottom:8px;"></div>
+    <button onclick="submitOptions()">Insert</button>
     <p style="font-size:12px; color:#666;">
-      Window 1:00 to 18:30. Declined events are free. Accepted, maybe, invited, and owner are busy.
+      Window 10:00 to 18:30. Declined events are free. Accepted, maybe, invited, and owner are busy.
     </p>
   </body>
 </html>
